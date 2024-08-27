@@ -1,0 +1,78 @@
+# Define the P/Invoke signatures for the necessary Windows API functions
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+public class Kernel32 {
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr CreateFile(
+        string lpFileName,
+        uint dwDesiredAccess,
+        uint dwShareMode,
+        IntPtr lpSecurityAttributes,
+        uint dwCreationDisposition,
+        uint dwFlagsAndAttributes,
+        IntPtr hTemplateFile);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool CloseHandle(IntPtr hObject);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetFileTime(
+        IntPtr hFile,
+        ref long lpCreationTime,
+        ref long lpLastAccessTime,
+        ref long lpLastWriteTime);
+}
+"@
+
+# Constants for CreateFile
+$GENERIC_WRITE = 0x40000000
+$GENERIC_READ = 0x80000000
+$OPEN_EXISTING = 0x3
+$FILE_SHARE_READ = 0x1
+$FILE_SHARE_WRITE = 0x2
+
+# Convert DateTime to FILETIME (100-nanosecond intervals since January 1, 1601)
+function ConvertTo-FileTime($dateTime) {
+    return $dateTime.ToFileTime()
+}
+
+# File path to modify
+$filePath = "C:\path\to\your\file.log"
+
+# Desired timestamps
+$newCreationTime = ConvertTo-FileTime([datetime]"2023-08-01 14:00:00")
+$newLastAccessTime = ConvertTo-FileTime([datetime]"2023-08-01 15:00:00")
+$newLastWriteTime = ConvertTo-FileTime([datetime]"2023-08-01 16:00:00")
+
+# Open the file handle
+$hFile = [Kernel32]::CreateFile(
+    $filePath,
+    $GENERIC_WRITE,
+    $FILE_SHARE_READ -bor $FILE_SHARE_WRITE,
+    [IntPtr]::Zero,
+    $OPEN_EXISTING,
+    0,
+    [IntPtr]::Zero
+)
+
+if ($hFile -eq [IntPtr]::Zero) {
+    throw "Failed to open file. Error: $([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+}
+
+try {
+    # Set the file times
+    $result = [Kernel32]::SetFileTime($hFile, [ref]$newCreationTime, [ref]$newLastAccessTime, [ref]$newLastWriteTime)
+
+    if (-not $result) {
+        throw "Failed to set file time. Error: $([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+    } else {
+        Write-Output "Timestamps for '$filePath' have been modified successfully."
+    }
+} finally {
+    # Close the file handle
+    [Kernel32]::CloseHandle($hFile) | Out-Null
+}
